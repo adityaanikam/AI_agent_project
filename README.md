@@ -32,7 +32,7 @@ pip install -r requirements.txt
 
 2. Set up environment variables:
 ```bash
-cp .env.example .env
+cp .env
 # Edit .env with your Google API key
 ```
 
@@ -59,7 +59,6 @@ project_flowbit/
 │   └── schemas/     # Data models and validation
 └── main.py         # FastAPI application entry point
 ```
-
-## License
-
-MIT 
+###outputs 
+![Screenshot 2025-06-04 151914](https://github.com/user-attachments/assets/f4298c5e-dead-49e8-bad4-b7b6a5d544fc)
+![Screenshot 2025-06-04 151858](https://github.com/user-attachments/assets/976556f7-6066-44bc-b79e-45231fbdf1df)
