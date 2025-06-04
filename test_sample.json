@@ -1,0 +1,25 @@
+{
+    "event_type": "webhook",
+    "timestamp": "2024-02-20T10:00:00Z",
+    "data": {
+        "order_id": "12345",
+        "status": "completed",
+        "amount": 15000.00,
+        "customer": {
+            "id": "CUST001",
+            "name": "John Doe",
+            "email": "john.doe@example.com"
+        },
+        "items": [
+            {
+                "id": "ITEM001",
+                "name": "Premium Software License",
+                "quantity": 1,
+                "price": 15000.00
+            }
+        ]
+    },
+    "source": "payment_gateway",
+    "version": "1.0",
+    "signature": "abc123..."
+} 

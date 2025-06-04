@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # FlowBit Main Application
+  flowbit-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: flowbit-app
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-your_gemini_api_key_here}
+      - DATABASE_URL=sqlite:///./data/flowbit.db
+      - CRM_ENDPOINT=http://mockserver:8001/crm
+      - RISK_ALERT_ENDPOINT=http://mockserver:8002/risk
+      - COMPLIANCE_ENDPOINT=http://mockserver:8003/compliance
+      - NOTIFICATION_ENDPOINT=http://mockserver:8004/notify
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      - MAX_UPLOAD_SIZE=10485760
+    volumes:
+      - flowbit-data:/app/data
+      - flowbit-logs:/app/logs
+    depends_on:
+      - mockserver
+    restart: unless-stopped
+    networks:
+      - flowbit-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Development mode with hot reload
+  flowbit-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: flowbit-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-your_gemini_api_key_here}
+      - DATABASE_URL=sqlite:///./data/flowbit.db
+      - CRM_ENDPOINT=http://mockserver:8001/crm
+      - RISK_ALERT_ENDPOINT=http://mockserver:8002/risk
+      - COMPLIANCE_ENDPOINT=http://mockserver:8003/compliance
+      - NOTIFICATION_ENDPOINT=http://mockserver:8004/notify
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - MAX_UPLOAD_SIZE=10485760
+    volumes:
+      - .:/app
+      - flowbit-data:/app/data
+      - flowbit-logs:/app/logs
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      - mockserver
+    networks:
+      - flowbit-network
+    profiles:
+      - dev
+
+  # Mock External Services (simulates CRM, Risk Alert, etc.)
+  mockserver:
+    image: nginx:alpine
+    container_name: flowbit-mockserver
+    ports:
+      - "8001:8001"
+      - "8002:8002"
+      - "8003:8003"
+      - "8004:8004"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/mock-responses:/usr/share/nginx/html:ro
+    networks:
+      - flowbit-network
+    restart: unless-stopped
+
+  # Optional: Database viewer (for SQLite)
+  sqlite-web:
+    image: coleifer/sqlite-web
+    container_name: flowbit-sqlite-web
+    ports:
+      - "8080:8080"
+    volumes:
+      - flowbit-data:/data
+    command: ["sqlite_web", "/data/flowbit.db", "--host", "0.0.0.0", "--port", "8080"]
+    depends_on:
+      - flowbit-app
+    networks:
+      - flowbit-network
+    profiles:
+      - tools
+
+volumes:
+  flowbit-data:
+    driver: local
+  flowbit-logs:
+    driver: local
+
+networks:
+  flowbit-network:
+    driver: bridge 

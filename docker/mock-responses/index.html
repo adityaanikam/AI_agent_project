@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FlowBit Mock Services</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .service { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .endpoint { background-color: #f5f5f5; padding: 5px; margin: 5px 0; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>FlowBit Mock Services</h1>
+    <p>Mock external services for testing FlowBit multi-agent system</p>
+    
+    <div class="service">
+        <h3>CRM Service (Port 8001)</h3>
+        <div class="endpoint">POST http://localhost:8001/crm</div>
+        <p>Mock CRM ticket creation service</p>
+    </div>
+    
+    <div class="service">
+        <h3>Risk Alert Service (Port 8002)</h3>
+        <div class="endpoint">POST http://localhost:8002/risk</div>
+        <p>Mock risk alert logging service</p>
+    </div>
+    
+    <div class="service">
+        <h3>Compliance Service (Port 8003)</h3>
+        <div class="endpoint">POST http://localhost:8003/compliance</div>
+        <p>Mock compliance checking service</p>
+    </div>
+    
+    <div class="service">
+        <h3>Notification Service (Port 8004)</h3>
+        <div class="endpoint">POST http://localhost:8004/notify</div>
+        <p>Mock notification service</p>
+    </div>
+</body>
+</html> 

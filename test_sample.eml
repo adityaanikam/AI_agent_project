@@ -1,0 +1,22 @@
+From: urgent@example.com
+To: support@example.com
+Subject: URGENT: System Outage in Production
+Date: Wed, 20 Feb 2024 10:00:00 +0000
+Message-ID: <123456@example.com>
+Content-Type: text/plain; charset="UTF-8"
+
+Dear Support Team,
+
+This is an URGENT notification regarding a critical system outage in our production environment.
+
+Impact:
+- All customer-facing services are down
+- Database replication has stopped
+- Error rate is above 50%
+
+Please escalate this to the on-call engineer immediately.
+
+Best regards,
+System Monitoring Team
+
+P.S. This is an automated message. Please do not reply to this email. 
