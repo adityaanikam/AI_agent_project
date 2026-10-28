@@ -1,5 +1,10 @@
 # FlowBit Docker Deployment Guide
 
+> Not re-tested since the move to LangGraph and Ollama. The compose files now
+> pass `FLOWBIT_LLM_PROVIDER`, `OLLAMA_BASE_URL` and `FLOWBIT_CHECKPOINT_DB`
+> instead of `GOOGLE_API_KEY`; the Gemini API key steps below are out of date.
+> The default provider is a local Ollama server, see README.md.
+
 🐳 **Complete containerization of the FlowBit Multi-Agent AI System**
 
 ## 📋 Prerequisites

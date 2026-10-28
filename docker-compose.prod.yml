@@ -11,7 +11,9 @@ services:
     ports:
       - "127.0.0.1:8000:8000"  # Bind to localhost only for security
     environment:
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - FLOWBIT_LLM_PROVIDER=${FLOWBIT_LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - FLOWBIT_CHECKPOINT_DB=/app/data/checkpoints.db
       - DATABASE_URL=sqlite:///./data/flowbit.db
       - CRM_ENDPOINT=http://mockserver:8001/crm
       - RISK_ALERT_ENDPOINT=http://mockserver:8002/risk
