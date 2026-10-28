@@ -2,6 +2,11 @@
 Data models and validation schemas
 """
 
+from .classification import (
+    Classification,
+    ClassificationMetadata
+)
+
 from .email import (
     EmailDocument,
     EmailMetadata,
@@ -16,6 +21,7 @@ from .json import (
     APIResponse,
     SystemEvent,
     UserAction,
+    JSONAnalysis,
     SAMPLE_WEBHOOK,
     SAMPLE_API_RESPONSE,
     SAMPLE_SYSTEM_EVENT,
@@ -28,12 +34,17 @@ from .pdf import (
     DocumentTotals,
     ComplianceCheck,
     DocumentMetadata,
+    PDFAnalysis,
     SAMPLE_INVOICE,
     SAMPLE_CONTRACT,
     SAMPLE_REPORT
 )
 
 __all__ = [
+    # Classifier schemas
+    'Classification',
+    'ClassificationMetadata',
+
     # Email schemas
     'EmailDocument',
     'EmailMetadata',
@@ -47,6 +58,7 @@ __all__ = [
     'APIResponse',
     'SystemEvent',
     'UserAction',
+    'JSONAnalysis',
     'SAMPLE_WEBHOOK',
     'SAMPLE_API_RESPONSE',
     'SAMPLE_SYSTEM_EVENT',
@@ -58,6 +70,7 @@ __all__ = [
     'DocumentTotals',
     'ComplianceCheck',
     'DocumentMetadata',
+    'PDFAnalysis',
     'SAMPLE_INVOICE',
     'SAMPLE_CONTRACT',
     'SAMPLE_REPORT'
