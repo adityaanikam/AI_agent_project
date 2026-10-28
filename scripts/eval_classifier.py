@@ -18,6 +18,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, get_args
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -151,6 +153,7 @@ def main(argv=None) -> int:
     parser.add_argument("--provider", choices=["ollama", "gemini", "fake"],
                         help="defaults to FLOWBIT_LLM_PROVIDER, then ollama")
     args = parser.parse_args(argv)
+    load_dotenv()  # same .env settings as the app, e.g. OLLAMA_MODEL
 
     samples = load_samples(args.samples)
     result = evaluate(get_chat_model(args.provider), samples)
