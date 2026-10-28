@@ -30,39 +30,37 @@ PDF_ANALYSIS = {
 
 # Classifier
 
-def test_classifier_uses_model_answer():
+def test_classifier_parses_model_answer():
     llm = FakeChatModel(responses=[{"input_type": "email", "business_intent": "Complaint",
                                     "confidence": 0.95, "metadata": {"urgency": "high"}}])
-    result = ClassifierAgent(llm).classify(SAMPLE_EMAIL)
-    assert result["classification"]["input_type"] == "email"
-    assert result["classification"]["confidence"] == 0.95
+    result = ClassifierAgent(llm).llm_classify(SAMPLE_EMAIL)
+    assert result.parsed.input_type == "email"
+    assert result.parsed.confidence == 0.95
     assert "Content to classify" in llm.calls[0][-1].content
 
 
-def test_classifier_repairs_then_uses_repaired_answer():
+def test_classifier_repair_sends_failed_reply_back():
     llm = FakeChatModel(responses=[
         "```json\n{\"input_type\": \"email\"}\n```",
         {"input_type": "email", "business_intent": "Complaint", "confidence": 0.8},
     ])
-    result = ClassifierAgent(llm).classify(SAMPLE_EMAIL)
-    assert result["classification"]["business_intent"] == "Complaint"
-    assert len(llm.calls) == 2
+    agent = ClassifierAgent(llm)
+    failed = agent.llm_classify(SAMPLE_EMAIL)
+    assert failed.failure == "parse"
+    repaired = agent.repair(SAMPLE_EMAIL, failed)
+    assert repaired.parsed.business_intent == "Complaint"
+    assert "input_type" in llm.calls[1][-2].content
 
 
-def test_classifier_falls_back_to_heuristic_after_failed_repair():
-    llm = FakeChatModel(responses=["not json", "still not json"])
-    result = ClassifierAgent(llm).classify(SAMPLE_JSON)
-    assert result["classification"]["input_type"] == "json"
-    assert result["classification"]["confidence"] == 0.5
-    assert result["classification"]["metadata"]["amount"] == 15000.0
-
-
-def test_classifier_falls_back_when_model_unreachable():
-    llm = FakeChatModel(responses=[ConnectionError("refused")])
-    result = ClassifierAgent(llm).classify(SAMPLE_EMAIL)
-    assert result["status"] == "success"
-    assert result["classification"]["input_type"] == "email"
-    assert len(llm.calls) == 1  # no repair for an unreachable model
+def test_classifier_heuristic_on_sample_files():
+    agent = ClassifierAgent(FakeChatModel())
+    json_result = agent.heuristic(SAMPLE_JSON)
+    assert json_result["input_type"] == "json"
+    assert json_result["confidence"] == 0.5
+    assert json_result["metadata"]["amount"] == 15000.0
+    email_result = agent.heuristic(SAMPLE_EMAIL)
+    assert email_result["input_type"] == "email"
+    assert email_result["business_intent"] == "Complaint"
 
 
 def test_heuristic_handles_json_array_mentioning_webhook():

@@ -54,20 +54,6 @@ class ClassifierAgent:
         """Re-ask the model with its invalid reply and the validation error"""
         return structured_call(self.llm, Classification, repair_messages(self.messages(content), failed))
 
-    def classify(self, content: str) -> Dict[str, Any]:
-        """Model answer, then one repair on a parse failure, then the heuristic"""
-        result = self.llm_classify(content)
-        if result.failure == "parse":
-            result = self.repair(content, result)
-        if result.ok:
-            classification = result.parsed.model_dump(mode="json")
-        else:
-            classification = self.heuristic(content)
-        return {
-            "status": "success",
-            "classification": classification
-        }
-
     def heuristic(self, content: str) -> Dict[str, Any]:
         """Keyword-based classification used when the model gives no valid answer"""
         input_type = self._detect_input_type(content)

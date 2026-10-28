@@ -56,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
                 updateTrace(data);
 
-                if (data.status === 'completed' || data.status === 'error') {
+                if (['completed', 'error', 'rejected', 'awaiting_review'].includes(data.status)) {
                     clearInterval(pollInterval);
                     updateStatus(data.status);
                 }
@@ -73,6 +73,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateStatus(status) {
+        if (status === 'awaiting_review') {
+            statusDiv.innerHTML = '<span class="processing">Waiting for review: see review_request below, answer with POST /review/{process_id}</span>';
+            return;
+        }
         const statusClass = status === 'completed' ? 'success' : 'error';
         statusDiv.innerHTML = `<span class="${statusClass}">Processing ${status}</span>`;
     }

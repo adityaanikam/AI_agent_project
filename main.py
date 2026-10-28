@@ -2,18 +2,22 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from typing import Optional, Dict, Any
+from contextlib import asynccontextmanager
+from typing import Optional
 import uvicorn
 import os
 import uuid
 import logging
-from datetime import datetime
+import threading
 from dotenv import load_dotenv
 
+# Load environment variables before the modules that read them
+load_dotenv()
+
 # Import our modules
-from app.agents import classifier_agent, email_agent, json_agent, pdf_agent
-from app.core import memory_manager, action_router
-from app.schemas import EmailDocument, WebhookData, PDFDocument
+from app.core import memory_manager
+from app.graph import create_runner
+from app.schemas import ReviewDecision
 
 # Configure logging
 logging.basicConfig(
@@ -22,14 +26,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Runs the LangGraph pipeline; checkpoints go to FLOWBIT_CHECKPOINT_DB
+runner = create_runner(memory_manager)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Resume runs a crash or restart left unfinished"""
+    if os.getenv("FLOWBIT_RESUME_ON_STARTUP", "1") != "0":
+        threading.Thread(target=runner.resume_incomplete, daemon=True).start()
+    yield
 
 # Initialize FastAPI app
 app = FastAPI(
     title="FlowBit - Multi-Agent AI Processing System",
     description="Process various input formats using specialized AI agents",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Configure CORS
@@ -43,81 +55,6 @@ app.add_middleware(
 
 # Mount static files for UI
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-async def process_file_async(
-    file_content: bytes,
-    file_name: str,
-    process_id: str,
-    process_type: Optional[str] = None
-):
-    """Background task for processing files"""
-    try:
-        # Step 1: Classify the input
-        logger.info(f"Starting classification for {process_id}")
-        
-        # Handle different file types for classification
-        if file_name.endswith('.pdf'):
-            # For PDF files, pass the raw bytes
-            classification = classifier_agent.classify(file_content.decode('utf-8', errors='ignore'))
-        else:
-            # For text files (JSON, EML), decode properly
-            try:
-                content_str = file_content.decode('utf-8')
-            except UnicodeDecodeError:
-                content_str = file_content.decode('latin-1', errors='ignore')
-            classification = classifier_agent.classify(content_str)
-        
-        if classification["status"] == "error":
-            raise Exception(f"Classification failed: {classification['error']}")
-            
-        # Store classification in memory
-        memory_manager.update_record(process_id, {
-            "classification": classification["classification"],
-            "status": "classified"
-        })
-        
-        # Step 2: Route to specialized agent
-        input_type = classification["classification"]["input_type"]
-        agent_output = None
-        
-        if input_type == "email":
-            content_str = file_content.decode('utf-8', errors='ignore')
-            agent_output = email_agent.process_email(content_str)
-        elif input_type == "json":
-            content_str = file_content.decode('utf-8', errors='ignore')
-            agent_output = json_agent.process_json(content_str)
-        elif input_type == "pdf":
-            agent_output = await pdf_agent.process_pdf(file_content)
-        else:
-            raise ValueError(f"Unsupported input type: {input_type}")
-            
-        if agent_output["status"] == "error":
-            raise Exception(f"Agent processing failed: {agent_output['error']}")
-            
-        # Store agent output in memory
-        memory_manager.update_record(process_id, {
-            "agent_output": agent_output,
-            "status": "processed"
-        })
-        
-        # Step 3: Route actions
-        logger.info(f"Routing actions for {process_id}")
-        actions = await action_router.process_agent_output(agent_output)
-        
-        # Store actions in memory
-        memory_manager.update_record(process_id, {
-            "actions_triggered": actions,
-            "status": "completed"
-        })
-        
-        logger.info(f"Processing completed for {process_id}")
-        
-    except Exception as e:
-        logger.error(f"Error processing {process_id}: {str(e)}")
-        memory_manager.update_record(process_id, {
-            "status": "error",
-            "error": str(e)
-        })
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -183,11 +120,10 @@ async def process_file(
         
         # Start background processing
         background_tasks.add_task(
-            process_file_async,
-            content,
-            file.filename,
+            runner.start,
             process_id,
-            process_type
+            file.filename or "",
+            content
         )
         
         return {
@@ -223,6 +159,7 @@ async def get_status(process_id: str):
             "agent_output": record.agent_output,
             "actions_triggered": record.actions_triggered,
             "error": record.error,
+            "review_request": runner.pending_review(process_id) if record.status == "awaiting_review" else None,
             "created_at": record.created_at.isoformat(),
             "updated_at": record.updated_at.isoformat()
         }
@@ -258,6 +195,43 @@ async def get_history():
     except Exception as e:
         logger.error(f"Error getting history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/review/{process_id}")
+async def review(process_id: str, decision: ReviewDecision, background_tasks: BackgroundTasks):
+    """
+    Resume a run paused for review (low classifier confidence or a risky action)
+    
+    Args:
+        process_id: The ID of the paused processing job
+        decision: approved, plus optional input_type / business_intent corrections
+    
+    Returns:
+        dict: Processing status
+    """
+    if not memory_manager.get_record(process_id):
+        raise HTTPException(status_code=404, detail="Process not found")
+    if runner.pending_review(process_id) is None:
+        raise HTTPException(status_code=409, detail="Process is not waiting for review")
+    background_tasks.add_task(runner.review, process_id, decision.model_dump(exclude_none=True))
+    return {"status": "processing", "process_id": process_id, "message": "Review submitted"}
+
+@app.post("/resume/{process_id}")
+async def resume(process_id: str, background_tasks: BackgroundTasks):
+    """
+    Continue a failed or interrupted run from its last checkpoint
+    
+    Args:
+        process_id: The ID of the processing job
+    
+    Returns:
+        dict: Processing status
+    """
+    if not memory_manager.get_record(process_id):
+        raise HTTPException(status_code=404, detail="Process not found")
+    if not runner.can_resume(process_id):
+        raise HTTPException(status_code=409, detail="Process has no unfinished checkpoint to resume")
+    background_tasks.add_task(runner.resume, process_id)
+    return {"status": "processing", "process_id": process_id, "message": "Resuming from checkpoint"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 

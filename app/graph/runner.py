@@ -128,7 +128,7 @@ def create_runner(memory: MemoryManager, llm: Optional[BaseChatModel] = None,
     settings = settings or GraphSettings.from_env()
     graph = build_graph(
         Agents.with_llm(llm or get_chat_model()),
-        router or ActionRouter(base_delay=settings.retry_base_delay),
+        router or ActionRouter(),
         settings,
         checkpointer=sqlite_checkpointer(checkpoint_path or os.getenv("FLOWBIT_CHECKPOINT_DB", "checkpoints.db"))
     )
