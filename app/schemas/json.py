@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -49,6 +49,31 @@ class UserAction(BaseModel):
     timestamp: datetime
     resource: str
     metadata: Optional[Dict[str, Any]] = None
+
+class SchemaAnalysis(BaseModel):
+    """Structure of the analysed JSON payload"""
+    required_fields: List[str] = []
+    optional_fields: List[str] = []
+    field_types: Dict[str, str] = {}
+
+class DataQuality(BaseModel):
+    """Data quality scores for the analysed JSON payload"""
+    completeness: float = Field(..., ge=0.0, le=1.0)
+    consistency: float = Field(..., ge=0.0, le=1.0)
+    issues: List[str] = []
+
+class BusinessContext(BaseModel):
+    """Business meaning of the analysed JSON payload"""
+    type: Literal["webhook", "api", "config", "other"]
+    priority: Priority
+    action_required: bool
+
+class JSONAnalysis(BaseModel):
+    """Structured output of the JSON agent's LLM analysis"""
+    schema_analysis: SchemaAnalysis
+    anomalies: List[str] = []
+    data_quality: DataQuality
+    business_context: BusinessContext
 
 # Sample JSON formats
 SAMPLE_WEBHOOK = {
