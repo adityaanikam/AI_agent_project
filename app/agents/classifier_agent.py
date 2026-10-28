@@ -1,38 +1,21 @@
-from typing import Dict, Any, Tuple
-import google.generativeai as genai
-import os
+from typing import Dict, Any, List, Optional
 import json
-import re
-from dotenv import load_dotenv
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-# Load environment variables
-load_dotenv()
+from app.llm import StructuredResult, get_chat_model, repair_messages, structured_call
+from app.schemas import Classification
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# Confidence reported by the keyword heuristic, which is a guess
+HEURISTIC_CONFIDENCE = 0.5
 
-class ClassifierAgent:
-    """Agent responsible for classifying input type and business intent"""
-    
-    def __init__(self):
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+CLASSIFIER_SYSTEM_PROMPT = """You classify incoming business content. Respond with JSON matching the provided schema.
 
-    def classify(self, content: str) -> Dict[str, Any]:
-        """
-        Classify the input content
-        
-        Args:
-            content: The content to classify
-            
-        Returns:
-            dict: Classification results
-        """
-        try:
-            prompt = f"""Classify this content and return ONLY a JSON object with no other text.
+input_type: "json" for JSON payloads, "email" for email messages, "pdf" for PDF documents.
 
-IMPORTANT: business_intent must NEVER be null. Always assign one of these values:
+business_intent must NEVER be null. Always assign one of these values:
 - "Invoice" (for bills, payments, receipts, financial documents)
-- "Complaint" (for urgent issues, problems, errors, outages) 
+- "Complaint" (for urgent issues, problems, errors, outages)
 - "RFQ" (for quotes, requests, proposals, bids)
 - "Regulation" (for compliance, legal, policy, GDPR, audit documents)
 - "Fraud Risk" (for security alerts, suspicious activity)
@@ -40,73 +23,52 @@ IMPORTANT: business_intent must NEVER be null. Always assign one of these values
 - "Report" (for analysis, summaries, findings)
 - "General" (for any other content)
 
-Return this exact JSON structure:
-{{
-    "input_type": "json|email|pdf",
-    "business_intent": "one of the values above - NEVER null",
-    "confidence": 0.0-1.0,
-    "metadata": {{
-        "urgency": "high|medium|low"
-    }}
-}}
+confidence: a number from 0.0 to 1.0.
+metadata.urgency: "high", "medium" or "low"."""
 
-Content to classify: {content[:800]}"""
 
-            # Get classification from Gemini
-            response = self.model.generate_content(prompt)
-            
-            # Clean and parse the response
-            try:
-                content_str = response.text.strip()
-                print(f"Classifier raw response: '{content_str}'")
-                
-                # Remove markdown formatting if present
-                if content_str.startswith('```'):
-                    content_str = re.sub(r'```[a-z]*\s*', '', content_str)
-                    content_str = re.sub(r'```\s*$', '', content_str)
-                    content_str = content_str.strip()
-                
-                # Try to find JSON in the response
-                if '{' in content_str and '}' in content_str:
-                    start = content_str.find('{')
-                    end = content_str.rfind('}') + 1
-                    json_str = content_str[start:end]
-                    
-                    # Clean any problematic characters
-                    json_str = json_str.replace('\n', ' ').replace('\t', ' ')
-                    json_str = re.sub(r'\s+', ' ', json_str)
-                    
-                    classification = json.loads(json_str)
-                else:
-                    raise json.JSONDecodeError("No JSON found", content_str, 0)
-                    
-            except (json.JSONDecodeError, Exception) as e:
-                print(f"JSON parsing failed: {e}")
-                print(f"Failed content: '{content_str[:200]}'")
-                # Fallback classification using simple heuristics
-                classification = {
-                    "input_type": self._detect_input_type(content),
-                    "business_intent": self._detect_intent(content),
-                    "confidence": 0.5,
-                    "metadata": self._extract_metadata(content, self._detect_input_type(content))
-                }
-            
-            return {
-                "status": "success",
-                "classification": classification
-            }
-        except Exception as e:
-            print(f"Classification error: {e}")
-            return {
-                "status": "error",
-                "error": str(e)
-            }
+class ClassifierAgent:
+    """Agent responsible for classifying input type and business intent"""
+
+    def __init__(self, llm: Optional[BaseChatModel] = None):
+        self._llm = llm
+
+    @property
+    def llm(self) -> BaseChatModel:
+        if self._llm is None:
+            self._llm = get_chat_model()
+        return self._llm
+
+    def messages(self, content: str) -> List[BaseMessage]:
+        """Prompt sent to the model for `content`"""
+        return [
+            SystemMessage(content=CLASSIFIER_SYSTEM_PROMPT),
+            HumanMessage(content=f"Content to classify: {content[:800]}")
+        ]
+
+    def llm_classify(self, content: str) -> StructuredResult:
+        """Ask the model for a Classification"""
+        return structured_call(self.llm, Classification, self.messages(content))
+
+    def repair(self, content: str, failed: StructuredResult) -> StructuredResult:
+        """Re-ask the model with its invalid reply and the validation error"""
+        return structured_call(self.llm, Classification, repair_messages(self.messages(content), failed))
+
+    def heuristic(self, content: str) -> Dict[str, Any]:
+        """Keyword-based classification used when the model gives no valid answer"""
+        input_type = self._detect_input_type(content)
+        return {
+            "input_type": input_type,
+            "business_intent": self._detect_intent(content),
+            "confidence": HEURISTIC_CONFIDENCE,
+            "metadata": self._extract_metadata(content, input_type)
+        }
 
     def _detect_input_type(self, content: str) -> str:
         """Fallback method to detect input type"""
         content_lower = content.lower()
         content_strip = content.strip()
-        
+
         if content_strip.startswith('{') and content_strip.endswith('}'):
             return "json"
         elif "from:" in content_lower and ("to:" in content_lower or "subject:" in content_lower):
@@ -123,52 +85,52 @@ Content to classify: {content[:800]}"""
     def _detect_intent(self, content: str) -> str:
         """Detect business intent using keywords"""
         content_lower = content.lower()
-        
+
         # Check for complaint/urgent keywords first (highest priority)
         if any(keyword in content_lower for keyword in ["urgent", "critical", "outage", "down", "error", "complaint", "issue", "problem"]):
             return "Complaint"
-        
+
         # Check for invoice keywords
         if any(keyword in content_lower for keyword in ["invoice", "payment", "bill", "amount", "total", "due", "remittance", "receipt"]):
             return "Invoice"
-        
+
         # Check for RFQ keywords
         if any(keyword in content_lower for keyword in ["quote", "rfq", "request", "proposal", "bid", "tender", "quotation"]):
             return "RFQ"
-        
+
         # Check for regulation/compliance keywords
         if any(keyword in content_lower for keyword in ["gdpr", "compliance", "regulation", "audit", "policy", "legal", "regulatory"]):
             return "Regulation"
-        
+
         # Check for fraud/risk keywords
         if any(keyword in content_lower for keyword in ["fraud", "suspicious", "risk", "alert", "security", "unauthorized"]):
             return "Fraud Risk"
-        
+
         # Check for certificate/completion documents
         if any(keyword in content_lower for keyword in ["certificate", "completion", "certification", "diploma", "achievement"]):
             return "Certificate"
-        
+
         # Check for report keywords
         if any(keyword in content_lower for keyword in ["report", "analysis", "summary", "findings", "results"]):
             return "Report"
-        
+
         # Default fallback - never return empty
         return "General"
 
     def _extract_metadata(self, content: str, input_type: str) -> Dict[str, Any]:
         """
         Extract metadata based on input type
-        
+
         Args:
             content: The content to analyze
             input_type: The type of input (email, json, pdf)
-            
+
         Returns:
             dict: Extracted metadata
         """
         metadata = {}
         content_lower = content.lower()
-        
+
         if input_type == "email":
             # Extract email-specific metadata
             metadata.update({
@@ -181,9 +143,11 @@ Content to classify: {content[:800]}"""
             # Extract JSON-specific metadata
             try:
                 data = json.loads(content)
+                if not isinstance(data, dict):
+                    data = {}
                 metadata.update({
-                    "has_nested_objects": any(isinstance(v, dict) for v in data.values()) if isinstance(data, dict) else False,
-                    "field_count": len(data) if isinstance(data, dict) else 0,
+                    "has_nested_objects": any(isinstance(v, dict) for v in data.values()),
+                    "field_count": len(data),
                     "amount": data.get("amount") or (data.get("data", {}).get("amount") if isinstance(data.get("data"), dict) else None)
                 })
             except json.JSONDecodeError:
@@ -198,8 +162,8 @@ Content to classify: {content[:800]}"""
                 "has_images": "image" in content_lower,
                 "document_type": "invoice" if "invoice" in content_lower else "other"
             })
-            
+
         return metadata
 
 # Initialize classifier agent
-classifier_agent = ClassifierAgent() 
+classifier_agent = ClassifierAgent()

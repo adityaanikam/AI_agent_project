@@ -61,6 +61,18 @@ class PDFDocument(BaseModel):
     metadata: DocumentMetadata
     raw_text: str
 
+class PDFComplianceSummary(BaseModel):
+    """Compliance view of a document as judged by the LLM"""
+    keywords_found: List[str] = []
+    risk_level: RiskLevel
+
+class PDFAnalysis(BaseModel):
+    """Structured output of the PDF agent's LLM analysis"""
+    document_type: DocumentType
+    line_items: List[LineItem] = []
+    totals: Optional[DocumentTotals] = None
+    compliance: PDFComplianceSummary
+
 # Sample PDF formats
 SAMPLE_INVOICE = {
     "document_type": "invoice",

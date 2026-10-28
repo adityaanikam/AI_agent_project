@@ -44,7 +44,7 @@ print_status "Docker and Docker Compose are available"
 if [ ! -f ".env" ]; then
     print_warning ".env file not found, copying from docker.env"
     cp docker.env .env
-    print_warning "Please edit .env file with your Google API key before continuing"
+    print_warning "Please review .env (Ollama URL and model) before continuing"
     exit 1
 fi
 

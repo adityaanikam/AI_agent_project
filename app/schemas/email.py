@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional
+from typing import List, Literal, Optional
 from datetime import datetime
 
 class EmailAttachment(BaseModel):
@@ -29,9 +29,9 @@ class EmailContent(BaseModel):
 
 class EmailAnalysis(BaseModel):
     """Schema for email analysis results"""
-    tone: str = Field(..., pattern="^(formal|informal|urgent|neutral)$")
-    urgency: str = Field(..., pattern="^(high|medium|low)$")
-    sentiment: str = Field(..., pattern="^(positive|negative|neutral)$")
+    tone: Literal["formal", "informal", "urgent", "neutral"]
+    urgency: Literal["high", "medium", "low"]
+    sentiment: Literal["positive", "negative", "neutral"]
     key_topics: List[str]
     action_items: List[str]
     entities: dict
