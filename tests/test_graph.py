@@ -40,7 +40,7 @@ class Harness:
 
     def new_runner(self, router=None):
         """A runner with a fresh graph on the same files, like after a restart"""
-        router = router or ActionRouter(sync_client=httpx.Client(transport=httpx.MockTransport(self._handle)))
+        router = router or ActionRouter(client=httpx.Client(transport=httpx.MockTransport(self._handle)))
         graph = build_graph(Agents.with_llm(self.llm), router, self.settings,
                             checkpointer=sqlite_checkpointer(str(self.tmp_path / "checkpoints.db")),
                             sleep=self.sleeps.append)
@@ -200,7 +200,7 @@ class CrashOnceRouter(ActionRouter):
 
 def test_crashed_run_resumes_from_checkpoint_after_restart(tmp_path):
     h = Harness(tmp_path, [EMAIL_CLASS, EMAIL_ANALYSIS])
-    h.runner = h.new_runner(router=CrashOnceRouter(sync_client=httpx.Client(transport=httpx.MockTransport(h._handle))))
+    h.runner = h.new_runner(router=CrashOnceRouter(client=httpx.Client(transport=httpx.MockTransport(h._handle))))
     assert h.start("mail.eml", SAMPLE_EMAIL) == "error"
     assert h.record().error == "worker crashed"
     assert len(h.llm.calls) == 2
@@ -215,7 +215,7 @@ def test_crashed_run_resumes_from_checkpoint_after_restart(tmp_path):
 
 def test_resume_incomplete_picks_up_unfinished_runs(tmp_path):
     h = Harness(tmp_path, [EMAIL_CLASS, EMAIL_ANALYSIS])
-    h.runner = h.new_runner(router=CrashOnceRouter(sync_client=httpx.Client(transport=httpx.MockTransport(h._handle))))
+    h.runner = h.new_runner(router=CrashOnceRouter(client=httpx.Client(transport=httpx.MockTransport(h._handle))))
     h.start("mail.eml", SAMPLE_EMAIL)
     # A killed process never gets to write "error"; its record stays mid-way
     h.memory.update_record("p1", {"status": "processed", "error": None})

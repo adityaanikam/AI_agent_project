@@ -7,6 +7,8 @@ from .classification import (
     ClassificationMetadata
 )
 
+from .review import ReviewDecision
+
 from .email import (
     EmailDocument,
     EmailMetadata,
@@ -44,6 +46,7 @@ __all__ = [
     # Classifier schemas
     'Classification',
     'ClassificationMetadata',
+    'ReviewDecision',
 
     # Email schemas
     'EmailDocument',

@@ -37,10 +37,6 @@ class PDFAgent:
             self._llm = get_chat_model()
         return self._llm
 
-    async def process_pdf(self, pdf_content: bytes) -> Dict[str, Any]:
-        """Async wrapper kept for the current request flow"""
-        return self.analyze_pdf(pdf_content)
-
     def analyze_pdf(self, pdf_content: bytes) -> Dict[str, Any]:
         """
         Process PDF content

@@ -96,7 +96,7 @@ def build_graph(
     """
     settings = settings or GraphSettings()
     if router is None and not classification_only:
-        router = ActionRouter(base_delay=settings.retry_base_delay)
+        router = ActionRouter()
     builder = StateGraph(FlowState)
 
     # Classification

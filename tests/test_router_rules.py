@@ -1,8 +1,8 @@
-import asyncio
 import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from app.core.router import ActionRouter
 
@@ -97,29 +97,27 @@ def test_fields_no_agent_produces_trigger_nothing():
     assert ActionRouter().plan_actions(output) == []
 
 
-def test_process_agent_output_posts_to_endpoint():
+def test_send_posts_payload_to_the_action_endpoint():
     seen = []
 
     def handler(request):
         seen.append((str(request.url), json.loads(request.content)))
         return httpx.Response(200, json={"status": "ok"})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    router = ActionRouter(client=client, base_delay=0)
-    results = asyncio.run(router.process_agent_output(json_agent_output(SAMPLE_JSON)))
-    assert results == [{"status": "ok"}]
-    assert seen[0][0] == router.endpoints["risk_alert"]
+    router = ActionRouter(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert router.send("risk_alert", {"amount": 1}) == {"status": "ok"}
+    assert seen == [(router.endpoints["risk_alert"], {"amount": 1})]
 
 
-def test_process_agent_output_retries_three_times_then_mocks():
-    calls = []
+def test_send_raises_on_error_status_and_unknown_type():
+    router = ActionRouter(client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(503))))
+    with pytest.raises(httpx.HTTPStatusError):
+        router.send("crm", {})
+    with pytest.raises(ValueError):
+        router.send("fax", {})
 
-    def handler(request):
-        calls.append(1)
-        return httpx.Response(503)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    router = ActionRouter(client=client, base_delay=0)
-    results = asyncio.run(router.process_agent_output(json_agent_output(SAMPLE_JSON)))
-    assert len(calls) == 4  # first attempt plus 3 retries
-    assert results[0]["mock"] is True
+def test_mock_response_is_marked_as_mock():
+    response = ActionRouter().mock_response("compliance", {})
+    assert response["mock"] is True
+    assert response["review_status"] == "scheduled"
