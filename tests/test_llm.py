@@ -123,3 +123,12 @@ def test_ollama_reply_outside_schema_is_a_parse_failure():
     result = structured_call(llm, Verdict, MESSAGES)
     assert result.failure == "parse"
     assert "maybe" in result.raw
+
+
+def test_gemini_provider_is_optional(monkeypatch):
+    pytest.importorskip("langchain_google_genai")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-test")
+    gemini = get_chat_model("gemini")
+    assert type(gemini).__name__ == "ChatGoogleGenerativeAI"
+    assert gemini.model.endswith("gemini-test")
