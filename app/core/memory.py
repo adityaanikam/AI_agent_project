@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 # Initialize SQLAlchemy
 Base = declarative_base()
@@ -27,9 +27,9 @@ class ProcessingRecord(Base):
 class MemoryManager:
     """Manages shared memory operations"""
     
-    def __init__(self):
+    def __init__(self, db_url: Optional[str] = None):
         # Use SQLite for development, can be changed to PostgreSQL for production
-        db_url = os.getenv("DATABASE_URL", "sqlite:///./flowbit.db")
+        db_url = db_url or os.getenv("DATABASE_URL", "sqlite:///./flowbit.db")
         self.engine = create_engine(db_url)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
@@ -69,6 +69,16 @@ class MemoryManager:
         session = self.Session()
         try:
             return session.query(ProcessingRecord).filter_by(process_id=process_id).first()
+        finally:
+            session.close()
+
+    def get_by_status(self, statuses: List[str]) -> List[ProcessingRecord]:
+        """Retrieve records whose status is one of `statuses`"""
+        session = self.Session()
+        try:
+            return session.query(ProcessingRecord).filter(
+                ProcessingRecord.status.in_(statuses)
+            ).all()
         finally:
             session.close()
 
