@@ -1,23 +1,26 @@
-from typing import Dict, Any, List
-import google.generativeai as genai
-import os
-import json
+from typing import Dict, Any, Optional
 import io
 from pypdf import PdfReader
 import re
-from dotenv import load_dotenv
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
-# Load environment variables
-load_dotenv()
+from app.llm import get_chat_model, structured_call_with_repair
+from app.schemas import PDFAnalysis
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+PDF_SYSTEM_PROMPT = """You are a PDF analysis expert. Your task is to:
+1. Extract key information from the document
+2. Identify document type (invoice, contract, report, policy, other)
+3. Extract line items and totals
+4. Check for compliance keywords and judge the risk level (high, medium, low)
+
+Respond with JSON matching the provided schema."""
 
 class PDFAgent:
     """Agent responsible for processing PDF documents"""
     
-    def __init__(self):
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+    def __init__(self, llm: Optional[BaseChatModel] = None):
+        self._llm = llm
         
         # Compliance keywords to check for
         self.compliance_keywords = {
@@ -28,7 +31,17 @@ class PDFAgent:
             "SOX": ["sox", "sarbanes-oxley", "financial control"]
         }
 
+    @property
+    def llm(self) -> BaseChatModel:
+        if self._llm is None:
+            self._llm = get_chat_model()
+        return self._llm
+
     async def process_pdf(self, pdf_content: bytes) -> Dict[str, Any]:
+        """Async wrapper kept for the current request flow"""
+        return self.analyze_pdf(pdf_content)
+
+    def analyze_pdf(self, pdf_content: bytes) -> Dict[str, Any]:
         """
         Process PDF content
         
@@ -48,58 +61,15 @@ class PDFAgent:
             for page in pdf.pages:
                 text_content += page.extract_text()
             
-            # Analyze with Gemini
-            prompt = f"""You are a PDF analysis expert. Your task is to:
-1. Extract key information from the document
-2. Identify document type (invoice, contract, report, etc.)
-3. Extract line items and totals
-4. Check for compliance keywords
-5. Assess document completeness
-
-Provide your response in JSON format with the following structure:
-{{
-    "document_type": "invoice|contract|report|other",
-    "line_items": [
-        {{
-            "description": "string",
-            "amount": 0.0,
-            "quantity": 1
-        }}
-    ],
-    "totals": {{
-        "subtotal": 0.0,
-        "tax": 0.0,
-        "total": 0.0
-    }},
-    "compliance": {{
-        "keywords_found": [],
-        "risk_level": "high|medium|low"
-    }},
-    "metadata": {{
-        "page_count": 1,
-        "has_tables": false,
-        "has_signatures": false
-    }}
-}}
-
-PDF content to analyze:
-{text_content[:1000]}"""
-
-            response = self.model.generate_content(prompt)
-            
-            # Parse the response safely
-            try:
-                content_str = response.text.strip()
-                # Find JSON content between curly braces
-                if '{' in content_str and '}' in content_str:
-                    start = content_str.find('{')
-                    end = content_str.rfind('}') + 1
-                    json_str = content_str[start:end]
-                    analysis = json.loads(json_str)
-                else:
-                    analysis = json.loads(content_str)
-            except json.JSONDecodeError:
-                # Fallback analysis if parsing fails
+            # Analyze with the model, one repair on a parse failure
+            result = structured_call_with_repair(self.llm, PDFAnalysis, [
+                SystemMessage(content=PDF_SYSTEM_PROMPT),
+                HumanMessage(content=f"PDF content to analyze:\n{text_content[:1000]}")
+            ])
+            if result.ok:
+                analysis = result.parsed.model_dump(mode="json")
+            else:
+                # Fallback analysis if the model gave no valid answer
                 analysis = {
                     "document_type": "other",
                     "line_items": [],
@@ -132,6 +102,7 @@ PDF content to analyze:
             return {
                 "status": "success",
                 "analysis": analysis,
+                "analysis_source": "llm" if result.ok else "fallback",
                 "compliance_check": compliance_check,
                 "metadata": metadata,
                 "raw_text": text_content
