@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import httpx
 import json
 import os
@@ -8,18 +8,34 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+HIGH_VALUE_THRESHOLD = 10000
+
+
+def _find_amount(parsed_data: Any) -> Optional[float]:
+    """Return the transaction amount from a parsed JSON payload, if any"""
+    if not isinstance(parsed_data, dict):
+        return None
+    candidates = [parsed_data.get("amount")]
+    if isinstance(parsed_data.get("data"), dict):
+        candidates.append(parsed_data["data"].get("amount"))
+    for value in candidates:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+    return None
+
 class ActionRouter:
     """Routes actions based on agent outputs and triggers appropriate endpoints"""
     
-    def __init__(self):
+    def __init__(self, client: Optional[httpx.AsyncClient] = None, base_delay: float = 1.0):
         self.endpoints = {
             "crm": os.getenv("CRM_ENDPOINT", "http://localhost:8001/crm"),
             "risk_alert": os.getenv("RISK_ALERT_ENDPOINT", "http://localhost:8002/risk"),
             "compliance": os.getenv("COMPLIANCE_ENDPOINT", "http://localhost:8003/compliance"),
             "notification": os.getenv("NOTIFICATION_ENDPOINT", "http://localhost:8004/notify")
         }
-        self.client = httpx.AsyncClient(timeout=30.0)
+        self.client = client or httpx.AsyncClient(timeout=30.0)
         self.max_retries = 3
+        self.base_delay = base_delay
 
     async def route_action(self, action_type: str, data: Dict[str, Any], retries: int = 0) -> Dict[str, Any]:
         """
@@ -48,8 +64,8 @@ class ActionRouter:
             return response.json()
         except (httpx.HTTPError, httpx.ConnectError, httpx.TimeoutException) as e:
             if retries < self.max_retries:
-                # Exponential backoff: wait 2^retries seconds
-                wait_time = 2 ** retries
+                # Exponential backoff: wait base_delay * 2^retries seconds
+                wait_time = self.base_delay * 2 ** retries
                 logger.warning(f"Action {action_type} failed, retrying in {wait_time}s (attempt {retries + 1}/{self.max_retries})")
                 await asyncio.sleep(wait_time)
                 return await self.route_action(action_type, data, retries + 1)
@@ -101,6 +117,50 @@ class ActionRouter:
                 "message": f"Mock response for unknown action type: {action_type}"
             }
 
+    def plan_actions(self, agent_output: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Decide which actions an agent output should trigger.
+
+        Only reads fields the agents actually produce:
+        - email agent: analysis.urgency, metadata.subject
+        - JSON agent: parsed_data (amount at top level or under "data")
+        - PDF agent: compliance_check.keywords_found / risk_level
+
+        Returns:
+            list: [{"type": <endpoint name>, "payload": {...}}]
+        """
+        planned = []
+        analysis = agent_output.get("analysis") or {}
+        metadata = agent_output.get("metadata") or {}
+
+        if analysis.get("urgency") == "high":
+            planned.append({"type": "notification", "payload": {
+                "priority": "high",
+                "message": metadata.get("subject") or "Urgent action required",
+                "source": "agent_analysis"
+            }})
+
+        # High-value transactions (>10K) in JSON payloads
+        amount = _find_amount(agent_output.get("parsed_data"))
+        if amount is not None and amount > HIGH_VALUE_THRESHOLD:
+            planned.append({"type": "risk_alert", "payload": {
+                "alert_type": "high_value_transaction",
+                "amount": amount
+            }})
+
+        # One compliance action per document, only when keywords were found
+        compliance_check = agent_output.get("compliance_check") or {}
+        keywords_found = compliance_check.get("keywords_found") or {}
+        if keywords_found:
+            is_gdpr = "GDPR" in keywords_found or compliance_check.get("risk_level") == "high"
+            planned.append({"type": "compliance", "payload": {
+                "alert_type": "gdpr_mention" if is_gdpr else "compliance_keywords",
+                "compliance_check": compliance_check,
+                "source": "pdf_analysis"
+            }})
+
+        return planned
+
     async def process_agent_output(self, agent_output: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Process agent output and trigger appropriate actions
@@ -114,71 +174,8 @@ class ActionRouter:
         actions = []
         
         try:
-            # Extract analysis data
-            analysis = agent_output.get("analysis", {})
-            metadata = agent_output.get("metadata", {})
-            
-            # Example routing logic based on agent output
-            if analysis.get("urgency") == "high":
-                actions.append(
-                    await self.route_action("notification", {
-                        "priority": "high",
-                        "message": analysis.get("message", "Urgent action required"),
-                        "source": "agent_analysis"
-                    })
-                )
-                
-            # Check for high-value transactions (>10K)
-            if "data" in agent_output and isinstance(agent_output["data"], dict):
-                amount = agent_output["data"].get("amount", 0)
-                if isinstance(amount, (int, float)) and amount > 10000:
-                    actions.append(
-                        await self.route_action("risk_alert", {
-                            "alert_type": "high_value_transaction",
-                            "amount": amount,
-                            "details": agent_output.get("details", {})
-                        })
-                    )
-            
-            # Check for risk scores
-            if "risk_score" in analysis and analysis["risk_score"] > 0.7:
-                actions.append(
-                    await self.route_action("risk_alert", {
-                        "risk_score": analysis["risk_score"],
-                        "details": analysis.get("details", {})
-                    })
-                )
-                
-            # Check for compliance issues
-            if "compliance_issues" in analysis or "compliance_check" in agent_output:
-                compliance_data = analysis.get("compliance_issues") or agent_output.get("compliance_check", {})
-                actions.append(
-                    await self.route_action("compliance", {
-                        "issues": compliance_data,
-                        "source": agent_output.get("source", "unknown")
-                    })
-                )
-                
-            # Check for GDPR mentions or high-risk compliance
-            compliance_check = agent_output.get("compliance_check", {})
-            if compliance_check.get("risk_level") == "high" or "GDPR" in str(compliance_check.get("keywords_found", {})):
-                actions.append(
-                    await self.route_action("compliance", {
-                        "alert_type": "gdpr_mention",
-                        "compliance_check": compliance_check,
-                        "source": "pdf_analysis"
-                    })
-                )
-                
-            # Check for customer data updates
-            if "customer_data" in analysis:
-                actions.append(
-                    await self.route_action("crm", {
-                        "action": "update",
-                        "data": analysis["customer_data"]
-                    })
-                )
-                
+            for action in self.plan_actions(agent_output):
+                actions.append(await self.route_action(action["type"], action["payload"]))
         except Exception as e:
             logger.error(f"Error processing agent output: {str(e)}")
             actions.append({
